@@ -3,7 +3,7 @@ use eyre::anyhow;
 use pretty_assertions_sorted::assert_eq;
 use serde_json::json;
 use starknet::{
-    core::types::{BlockId, ConfirmedBlockId, EventFilter},
+    core::types::{BlockId, ConfirmedBlockId, EventFilter, L2TransactionFinalityStatus},
     providers::{
         Provider, Url,
         jsonrpc::{HttpTransport, JsonRpcClient},
@@ -87,6 +87,8 @@ async fn check_ws_fixture(ws_url: &Url, fixture: PathBuf) -> eyre::Result<()> {
         .with_block_id(ConfirmedBlockId::Number(filter_seed.from_block));
     options.from_address = address;
     options.keys = keys;
+    // requires JSON-RPC API >= v09
+    options.finality_status = L2TransactionFinalityStatus::AcceptedOnL2;
     let mut subscription = stream.subscribe_events(options).await.unwrap();
     let mut actual_count = 0;
     let source = fs::File::open(fixture)?;
@@ -99,17 +101,17 @@ async fn check_ws_fixture(ws_url: &Url, fixture: PathBuf) -> eyre::Result<()> {
     loop {
         match subscription.recv().await {
             Ok(EventsUpdate::Event(event)) => {
-                if let Some(block_number) = event.block_number {
+                if let Some(block_number) = event.emitted_event.block_number {
                     if block_number > filter_seed.to_block {
                         return Err(anyhow!("missing expected values"));
                     }
 
                     let actual_json = json!({
                         "block_number": block_number,
-                        "data": event.data,
-                        "from_address": event.from_address,
-                        "keys": event.keys,
-                        "transaction_hash": event.transaction_hash,
+                        "data": event.emitted_event.data,
+                        "from_address": event.emitted_event.from_address,
+                        "keys": event.emitted_event.keys,
+                        "transaction_hash": event.emitted_event.transaction_hash,
                     });
                     let expected_json = parse_event(&expected_line)?;
                     assert_eq!(actual_json, expected_json);

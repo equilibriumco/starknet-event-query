@@ -16,7 +16,7 @@ pub struct Cli {
         long,
         value_name = "url",
         long_help = "Server websocket URL",
-        default_value = "ws://localhost:9545/rpc/v0_8"
+        default_value = "ws://localhost:9545/rpc/v0_9"
     )]
     pub pathfinder_ws_url: String,
     #[arg(
