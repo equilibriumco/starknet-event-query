@@ -29,6 +29,13 @@ pub struct Cli {
         default_value = "ground"
     )]
     pub fixture_dir: PathBuf,
+    #[arg(
+        long,
+        short = 'm',
+        long_help = "Multi-address mode",
+        default_value = "false"
+    )]
+    pub multi: bool,
 }
 
 fn cond_refract(cli: &Cli, unfiltered_rx: &Regex, fixture: PathBuf) -> eyre::Result<()> {
@@ -43,7 +50,7 @@ fn cond_refract(cli: &Cli, unfiltered_rx: &Regex, fixture: PathBuf) -> eyre::Res
     }
 
     let mut known_addresses = HashMap::new();
-    let mut events = Vec::new();
+    let mut opt_events = if !cli.multi { Some(Vec::new()) } else { None };
     let source = fs::File::open(&fixture)?;
     let reader = BufReader::new(source);
     for line in reader.lines() {
@@ -55,7 +62,9 @@ fn cond_refract(cli: &Cli, unfiltered_rx: &Regex, fixture: PathBuf) -> eyre::Res
         let count = known_addresses.entry(addr.clone()).or_insert(0);
         *count += 1;
 
-        events.push(event);
+        if let Some(ref mut events) = opt_events {
+            events.push(event);
+        }
     }
 
     let mut known_addresses: Vec<String> = known_addresses
@@ -69,24 +78,37 @@ fn cond_refract(cli: &Cli, unfiltered_rx: &Regex, fixture: PathBuf) -> eyre::Res
         known_addresses.len()
     );
 
-    for (index, addr) in known_addresses.into_iter().enumerate() {
-        let filter_no = index + 1;
-        let filter_name = format!("{}f{}.json", stem, filter_no);
+    if let Some(events) = opt_events {
+        for (index, addr) in known_addresses.into_iter().enumerate() {
+            let filter_no = index + 1;
+            let filter_name = format!("{}f{}.json", stem, filter_no);
+            let filter_path = cli.fixture_dir.join(filter_name);
+            let filter_json = json!({
+                "address": addr.clone()
+            });
+            fs::write(filter_path, filter_json.to_string())?;
+
+            let output_name = format!("{}w{}.jsonl", stem, filter_no);
+            let output_path = cli.fixture_dir.join(output_name);
+            let mut output_file = fs::File::create(&output_path)?;
+            let address = serde_json::Value::String(addr.clone());
+            for event in events.iter() {
+                if event["from_address"] == address {
+                    writeln!(&mut output_file, "{}", event)?;
+                }
+            }
+        }
+    } else {
+        let filter_name = format!("{}f0.json", stem);
         let filter_path = cli.fixture_dir.join(filter_name);
         let filter_json = json!({
-            "address": addr.clone()
+            "address": known_addresses
         });
         fs::write(filter_path, filter_json.to_string())?;
 
-        let output_name = format!("{}w{}.jsonl", stem, filter_no);
+        let output_name = format!("{}w0.jsonl", stem);
         let output_path = cli.fixture_dir.join(output_name);
-        let mut output_file = fs::File::create(&output_path)?;
-        let address = serde_json::Value::String(addr.clone());
-        for event in events.iter() {
-            if event["from_address"] == address {
-                writeln!(&mut output_file, "{}", event)?;
-            }
-        }
+        fs::copy(fixture, output_path)?;
     }
 
     Ok(())
