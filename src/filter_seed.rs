@@ -1,5 +1,5 @@
 use eyre::anyhow;
-use starknet::core::types::Felt;
+use starknet_rust::core::types::Felt;
 
 use std::collections::HashMap;
 use std::fs;

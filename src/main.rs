@@ -2,14 +2,14 @@ use clap::Parser;
 use eyre::anyhow;
 use pretty_assertions_sorted::assert_eq;
 use serde_json::json;
-use starknet::{
+use starknet_rust::{
     core::types::{BlockId, ConfirmedBlockId, EventFilter, L2TransactionFinalityStatus},
     providers::{
         Provider, Url,
         jsonrpc::{HttpTransport, JsonRpcClient},
     },
 };
-use starknet_tokio_tungstenite::{EventSubscriptionOptions, EventsUpdate, TungsteniteStream};
+use starknet_rust_tokio_tungstenite::{EventSubscriptionOptions, EventsUpdate, TungsteniteStream};
 use tracing_subscriber::filter::LevelFilter;
 
 use std::collections::HashMap;
@@ -60,7 +60,10 @@ async fn check_rpc_fixture(provider: &impl Provider, fixture: PathBuf) -> eyre::
             let raw_string = serde_json::to_string(&event)?;
             let mut event_map: HashMap<String, serde_json::Value> =
                 serde_json::from_str(&raw_string)?;
-            event_map.remove("block_hash");
+            for extra in ["block_hash", "event_index", "transaction_index"] {
+                event_map.remove(extra);
+            }
+
             let s = serde_json::to_string(&event_map)?;
             let v: serde_json::Value = serde_json::from_str(&s)?;
             writeln!(&mut destination, "{}", v)?;
