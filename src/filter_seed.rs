@@ -1,5 +1,5 @@
 use eyre::anyhow;
-use starknet::core::types::Felt;
+use starknet_rust::core::types::Felt;
 
 use std::collections::HashMap;
 use std::fs;
@@ -23,37 +23,51 @@ impl FilterSeed {
     }
 
     #[allow(clippy::type_complexity)]
-    pub fn get_filter_address_and_keys(
+    pub fn get_filter_addresses_and_keys(
         &self,
         fixture: &Path,
-    ) -> eyre::Result<(Option<Felt>, Option<Vec<Vec<Felt>>>)> {
-        let (raw_address, raw_keys) = if let Some(basename) = self.format_filter_basename() {
+    ) -> eyre::Result<(Vec<Felt>, Option<Vec<Vec<Felt>>>)> {
+        let (raw_addresses, raw_keys) = if let Some(basename) = self.format_filter_basename() {
             let fixture_dir = fixture
                 .parent()
                 .ok_or_else(|| anyhow!("fixture without path: {:?}", fixture))?;
             let filter_path = fixture_dir.join(basename);
             let contents = fs::read_to_string(filter_path)?;
             let filter_map: HashMap<String, serde_json::Value> = serde_json::from_str(&contents)?;
-            let raw_address =
-                if let Some(serde_json::Value::String(addr)) = filter_map.get("address") {
-                    Some(addr.clone())
-                } else {
-                    None
-                };
+            let raw_addresses = if let Some(raw_address) = filter_map.get("address") {
+                match raw_address {
+                    serde_json::Value::String(addr) => vec![addr.clone()],
+                    serde_json::Value::Array(addrs) => addrs
+                        .iter()
+                        .map(|a| {
+                            if let serde_json::Value::String(s) = a {
+                                Ok(s.clone())
+                            } else {
+                                Err(anyhow!("unexpected address item type"))
+                            }
+                        })
+                        .collect::<Result<Vec<String>, _>>()?,
+                    _ => {
+                        return Err(anyhow!("unexpected address type"));
+                    }
+                }
+            } else {
+                vec![]
+            };
             let raw_keys = if let Some(serde_json::Value::Array(keys)) = filter_map.get("keys") {
                 Some(keys.clone())
             } else {
                 None
             };
-            (raw_address, raw_keys)
+            (raw_addresses, raw_keys)
         } else {
-            (None, None)
+            (vec![], None)
         };
 
-        let address = match raw_address {
-            Some(s) => Some(Felt::from_hex(&s)?),
-            None => None,
-        };
+        let addresses = raw_addresses
+            .into_iter()
+            .map(|s| Felt::from_hex(&s))
+            .collect::<Result<Vec<Felt>, _>>()?;
 
         let keys = match raw_keys {
             Some(outer) => {
@@ -78,7 +92,7 @@ impl FilterSeed {
             None => None,
         };
 
-        Ok((address, keys))
+        Ok((addresses, keys))
     }
 
     fn from_stem(stem: &str) -> eyre::Result<Self> {

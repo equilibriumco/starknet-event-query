@@ -9,14 +9,14 @@ pub struct Cli {
         long,
         value_name = "url",
         long_help = "Server URL",
-        default_value = "http://127.0.0.1:9545"
+        default_value = "http://127.0.0.1:9545/rpc/v0_10"
     )]
     pub pathfinder_rpc_url: String,
     #[arg(
         long,
         value_name = "url",
         long_help = "Server websocket URL",
-        default_value = "ws://localhost:9545/rpc/v0_9"
+        default_value = "ws://localhost:9545/rpc/v0_10"
     )]
     pub pathfinder_ws_url: String,
     #[arg(
@@ -33,4 +33,11 @@ pub struct Cli {
         default_value = "false"
     )]
     pub subscribe: bool,
+    #[arg(
+        long,
+        short = 'p',
+        long_help = "Persist downloaded RPC data",
+        default_value = "false"
+    )]
+    pub persist: bool,
 }

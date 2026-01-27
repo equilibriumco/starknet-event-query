@@ -2,20 +2,22 @@ use clap::Parser;
 use eyre::anyhow;
 use pretty_assertions_sorted::assert_eq;
 use serde_json::json;
-use starknet::{
-    core::types::{BlockId, ConfirmedBlockId, EventFilter, L2TransactionFinalityStatus},
+use starknet_rust::{
+    core::types::{
+        AddressFilter, BlockId, ConfirmedBlockId, EventFilter, Felt, L2TransactionFinalityStatus,
+    },
     providers::{
         Provider, Url,
         jsonrpc::{HttpTransport, JsonRpcClient},
     },
 };
-use starknet_tokio_tungstenite::{EventSubscriptionOptions, EventsUpdate, TungsteniteStream};
+use starknet_rust_tokio_tungstenite::{EventSubscriptionOptions, EventsUpdate, TungsteniteStream};
 use tracing_subscriber::filter::LevelFilter;
 
 use std::collections::HashMap;
 use std::fs;
 use std::io::{BufRead, BufReader, Seek, SeekFrom, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use starknet_event_query::{
@@ -40,17 +42,53 @@ fn check_received_data(fixture: PathBuf, mut destination: fs::File) -> eyre::Res
     Ok(())
 }
 
-async fn check_rpc_fixture(provider: &impl Provider, fixture: PathBuf) -> eyre::Result<()> {
+fn make_address_filter(addresses: Vec<Felt>) -> Option<AddressFilter> {
+    match addresses.len() {
+        0 => None,
+        1 => Some(AddressFilter::Single(addresses[0])),
+        _ => Some(AddressFilter::Multiple(addresses)),
+    }
+}
+
+fn make_actual_path(fixture: &Path) -> eyre::Result<PathBuf> {
+    let fixture_dir = fixture
+        .parent()
+        .ok_or_else(|| anyhow!("fixture without path: {:?}", fixture))?;
+    let os_name = fixture
+        .file_name()
+        .ok_or_else(|| anyhow!("invalid fixture path: {:?}", fixture))?;
+    let name = os_name
+        .to_str()
+        .ok_or_else(|| anyhow!("invalid fixture name: {:?}", fixture))?;
+    let actual_name = format!("a{name}");
+    Ok(fixture_dir.join(actual_name))
+}
+
+async fn check_rpc_fixture(
+    cli: &Cli,
+    provider: &impl Provider,
+    fixture: PathBuf,
+) -> eyre::Result<()> {
     let filter_seed = FilterSeed::load(&fixture)?;
-    let (address, keys) = filter_seed.get_filter_address_and_keys(&fixture)?;
+    let (addresses, keys) = filter_seed.get_filter_addresses_and_keys(&fixture)?;
     let filter = EventFilter {
         from_block: Some(BlockId::Number(filter_seed.from_block)),
         to_block: Some(BlockId::Number(filter_seed.to_block)),
-        address,
+        address: make_address_filter(addresses),
         keys,
     };
     let mut token = None;
-    let mut destination = tempfile::tempfile()?;
+    let mut destination = if cli.persist {
+        let destination_path = make_actual_path(&fixture)?;
+        fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(destination_path)?
+    } else {
+        tempfile::tempfile()?
+    };
     let mut actual_count = 0;
     let mut page_count = 0;
     loop {
@@ -60,7 +98,10 @@ async fn check_rpc_fixture(provider: &impl Provider, fixture: PathBuf) -> eyre::
             let raw_string = serde_json::to_string(&event)?;
             let mut event_map: HashMap<String, serde_json::Value> =
                 serde_json::from_str(&raw_string)?;
-            event_map.remove("block_hash");
+            for extra in ["block_hash", "event_index", "transaction_index"] {
+                event_map.remove(extra);
+            }
+
             let s = serde_json::to_string(&event_map)?;
             let v: serde_json::Value = serde_json::from_str(&s)?;
             writeln!(&mut destination, "{}", v)?;
@@ -79,13 +120,13 @@ async fn check_rpc_fixture(provider: &impl Provider, fixture: PathBuf) -> eyre::
 
 async fn check_ws_fixture(ws_url: &Url, fixture: PathBuf) -> eyre::Result<()> {
     let filter_seed = FilterSeed::load(&fixture)?;
-    let (address, keys) = filter_seed.get_filter_address_and_keys(&fixture)?;
+    let (addresses, keys) = filter_seed.get_filter_addresses_and_keys(&fixture)?;
     let stream = TungsteniteStream::connect(ws_url, Duration::from_secs(5))
         .await
         .expect("WebSocket connection failed");
     let mut options = EventSubscriptionOptions::new()
         .with_block_id(ConfirmedBlockId::Number(filter_seed.from_block));
-    options.from_address = address;
+    options.from_address = make_address_filter(addresses);
     options.keys = keys;
     // requires JSON-RPC API >= v09
     options.finality_status = L2TransactionFinalityStatus::AcceptedOnL2;
@@ -144,10 +185,11 @@ async fn check_ws_fixture(ws_url: &Url, fixture: PathBuf) -> eyre::Result<()> {
     Ok(())
 }
 
-async fn run_rpc(rpc_url: Url, mask_path_str: &str) -> eyre::Result<()> {
+async fn run_rpc(cli: Cli, mask_path_str: &str) -> eyre::Result<()> {
+    let rpc_url: Url = cli.pathfinder_rpc_url.parse()?;
     let provider = JsonRpcClient::new(HttpTransport::new(rpc_url));
     for entry in glob::glob(mask_path_str)? {
-        check_rpc_fixture(&provider, entry?).await?;
+        check_rpc_fixture(&cli, &provider, entry?).await?;
     }
 
     Ok(())
@@ -171,8 +213,7 @@ async fn main() -> eyre::Result<()> {
         .to_str()
         .ok_or_else(|| anyhow!("invalid fixture dir: {:?}", cli.fixture_dir))?;
     if !cli.subscribe {
-        let rpc_url: Url = cli.pathfinder_rpc_url.parse()?;
-        run_rpc(rpc_url, path_str).await
+        run_rpc(cli, path_str).await
     } else {
         let ws_url: Url = cli.pathfinder_ws_url.parse()?;
         run_ws(ws_url, path_str).await
