@@ -33,4 +33,11 @@ pub struct Cli {
         default_value = "false"
     )]
     pub subscribe: bool,
+    #[arg(
+        long,
+        short = 'p',
+        long_help = "Persist downloaded RPC data",
+        default_value = "false"
+    )]
+    pub persist: bool,
 }

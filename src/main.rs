@@ -15,7 +15,7 @@ use tracing_subscriber::filter::LevelFilter;
 use std::collections::HashMap;
 use std::fs;
 use std::io::{BufRead, BufReader, Seek, SeekFrom, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use starknet_event_query::{
@@ -40,7 +40,25 @@ fn check_received_data(fixture: PathBuf, mut destination: fs::File) -> eyre::Res
     Ok(())
 }
 
-async fn check_rpc_fixture(provider: &impl Provider, fixture: PathBuf) -> eyre::Result<()> {
+fn make_actual_path(fixture: &Path) -> eyre::Result<PathBuf> {
+    let fixture_dir = fixture
+        .parent()
+        .ok_or_else(|| anyhow!("fixture without path: {:?}", fixture))?;
+    let os_name = fixture
+        .file_name()
+        .ok_or_else(|| anyhow!("invalid fixture path: {:?}", fixture))?;
+    let name = os_name
+        .to_str()
+        .ok_or_else(|| anyhow!("invalid fixture name: {:?}", fixture))?;
+    let actual_name = format!("a{name}");
+    Ok(fixture_dir.join(actual_name))
+}
+
+async fn check_rpc_fixture(
+    cli: &Cli,
+    provider: &impl Provider,
+    fixture: PathBuf,
+) -> eyre::Result<()> {
     let filter_seed = FilterSeed::load(&fixture)?;
     let (address, keys) = filter_seed.get_filter_address_and_keys(&fixture)?;
     let filter = EventFilter {
@@ -50,7 +68,17 @@ async fn check_rpc_fixture(provider: &impl Provider, fixture: PathBuf) -> eyre::
         keys,
     };
     let mut token = None;
-    let mut destination = tempfile::tempfile()?;
+    let mut destination = if cli.persist {
+        let destination_path = make_actual_path(&fixture)?;
+        fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(destination_path)?
+    } else {
+        tempfile::tempfile()?
+    };
     let mut actual_count = 0;
     let mut page_count = 0;
     loop {
@@ -147,10 +175,11 @@ async fn check_ws_fixture(ws_url: &Url, fixture: PathBuf) -> eyre::Result<()> {
     Ok(())
 }
 
-async fn run_rpc(rpc_url: Url, mask_path_str: &str) -> eyre::Result<()> {
+async fn run_rpc(cli: Cli, mask_path_str: &str) -> eyre::Result<()> {
+    let rpc_url: Url = cli.pathfinder_rpc_url.parse()?;
     let provider = JsonRpcClient::new(HttpTransport::new(rpc_url));
     for entry in glob::glob(mask_path_str)? {
-        check_rpc_fixture(&provider, entry?).await?;
+        check_rpc_fixture(&cli, &provider, entry?).await?;
     }
 
     Ok(())
@@ -174,8 +203,7 @@ async fn main() -> eyre::Result<()> {
         .to_str()
         .ok_or_else(|| anyhow!("invalid fixture dir: {:?}", cli.fixture_dir))?;
     if !cli.subscribe {
-        let rpc_url: Url = cli.pathfinder_rpc_url.parse()?;
-        run_rpc(rpc_url, path_str).await
+        run_rpc(cli, path_str).await
     } else {
         let ws_url: Url = cli.pathfinder_ws_url.parse()?;
         run_ws(ws_url, path_str).await
