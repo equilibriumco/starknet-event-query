@@ -60,7 +60,12 @@ async fn check_rpc_fixture(
     fixture: PathBuf,
 ) -> eyre::Result<()> {
     let filter_seed = FilterSeed::load(&fixture)?;
-    let (address, keys) = filter_seed.get_filter_address_and_keys(&fixture)?;
+    let (addresses, keys) = filter_seed.get_filter_addresses_and_keys(&fixture)?;
+    let address = match addresses.len() {
+        0 => None,
+        1 => Some(addresses[0]),
+        _ => panic!("multiple addresses not supported by starknet-rust"),
+    };
     let filter = EventFilter {
         from_block: Some(BlockId::Number(filter_seed.from_block)),
         to_block: Some(BlockId::Number(filter_seed.to_block)),
@@ -110,7 +115,12 @@ async fn check_rpc_fixture(
 
 async fn check_ws_fixture(ws_url: &Url, fixture: PathBuf) -> eyre::Result<()> {
     let filter_seed = FilterSeed::load(&fixture)?;
-    let (address, keys) = filter_seed.get_filter_address_and_keys(&fixture)?;
+    let (addresses, keys) = filter_seed.get_filter_addresses_and_keys(&fixture)?;
+    let address = match addresses.len() {
+        0 => None,
+        1 => Some(addresses[0]),
+        _ => panic!("subscription to multiple addresses not supported"),
+    };
     let stream = TungsteniteStream::connect(ws_url, Duration::from_secs(5))
         .await
         .expect("WebSocket connection failed");
