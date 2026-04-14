@@ -50,7 +50,7 @@ fn cond_refract(cli: &Cli, unfiltered_rx: &Regex, fixture: PathBuf) -> eyre::Res
     }
 
     let mut known_addresses = HashMap::new();
-    let mut opt_events = if !cli.multi { Some(Vec::new()) } else { None };
+    let mut events = Vec::new();
     let source = fs::File::open(&fixture)?;
     let reader = BufReader::new(source);
     for line in reader.lines() {
@@ -61,10 +61,7 @@ fn cond_refract(cli: &Cli, unfiltered_rx: &Regex, fixture: PathBuf) -> eyre::Res
 
         let count = known_addresses.entry(addr.clone()).or_insert(0);
         *count += 1;
-
-        if let Some(ref mut events) = opt_events {
-            events.push(event);
-        }
+        events.push(event);
     }
 
     let mut known_addresses: Vec<String> = known_addresses
@@ -78,7 +75,7 @@ fn cond_refract(cli: &Cli, unfiltered_rx: &Regex, fixture: PathBuf) -> eyre::Res
         known_addresses.len()
     );
 
-    if let Some(events) = opt_events {
+    if !cli.multi {
         for (index, addr) in known_addresses.into_iter().enumerate() {
             let filter_no = index + 1;
             let filter_name = format!("{}f{}.json", stem, filter_no);
@@ -108,7 +105,16 @@ fn cond_refract(cli: &Cli, unfiltered_rx: &Regex, fixture: PathBuf) -> eyre::Res
 
         let output_name = format!("{}w0.jsonl", stem);
         let output_path = cli.fixture_dir.join(output_name);
-        fs::copy(fixture, output_path)?;
+        let mut output_file = fs::File::create(&output_path)?;
+        for event in events.iter() {
+            let serde_json::Value::String(ref addr) = event["from_address"] else {
+                return Err(anyhow!("unexpected address type"));
+            };
+
+            if known_addresses.binary_search(addr).is_ok() {
+                writeln!(&mut output_file, "{}", event)?;
+            }
+        }
     }
 
     Ok(())
