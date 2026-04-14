@@ -11,8 +11,8 @@ itertools = "0.14.0"
 pretty_assertions_sorted = "1.2.3"
 regex = "1.12.2"
 serde_json = "1.0.145"
-starknet-rust = "0.18.0"
-starknet-rust-tokio-tungstenite = "0.4.0"
+starknet-rust = "0.19.0-rc.2"
+starknet-rust-tokio-tungstenite = "0.19.0-rc.2"
 tempfile = "3.23.0"
 time = { version = "0.3.44", features = ["parsing"] }
 tokio = { version = "1.48.0", features = ["full"] }

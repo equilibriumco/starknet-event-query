@@ -3,7 +3,9 @@ use eyre::anyhow;
 use pretty_assertions_sorted::assert_eq;
 use serde_json::json;
 use starknet_rust::{
-    core::types::{BlockId, ConfirmedBlockId, EventFilter, L2TransactionFinalityStatus},
+    core::types::{
+        AddressFilter, BlockId, ConfirmedBlockId, EventFilter, Felt, L2TransactionFinalityStatus,
+    },
     providers::{
         Provider, Url,
         jsonrpc::{HttpTransport, JsonRpcClient},
@@ -40,6 +42,14 @@ fn check_received_data(fixture: PathBuf, mut destination: fs::File) -> eyre::Res
     Ok(())
 }
 
+fn make_address_filter(addresses: Vec<Felt>) -> Option<AddressFilter> {
+    match addresses.len() {
+        0 => None,
+        1 => Some(AddressFilter::Single(addresses[0])),
+        _ => Some(AddressFilter::Multiple(addresses)),
+    }
+}
+
 fn make_actual_path(fixture: &Path) -> eyre::Result<PathBuf> {
     let fixture_dir = fixture
         .parent()
@@ -61,15 +71,10 @@ async fn check_rpc_fixture(
 ) -> eyre::Result<()> {
     let filter_seed = FilterSeed::load(&fixture)?;
     let (addresses, keys) = filter_seed.get_filter_addresses_and_keys(&fixture)?;
-    let address = match addresses.len() {
-        0 => None,
-        1 => Some(addresses[0]),
-        _ => panic!("multiple addresses not supported by starknet-rust"),
-    };
     let filter = EventFilter {
         from_block: Some(BlockId::Number(filter_seed.from_block)),
         to_block: Some(BlockId::Number(filter_seed.to_block)),
-        address,
+        address: make_address_filter(addresses),
         keys,
     };
     let mut token = None;
@@ -116,17 +121,12 @@ async fn check_rpc_fixture(
 async fn check_ws_fixture(ws_url: &Url, fixture: PathBuf) -> eyre::Result<()> {
     let filter_seed = FilterSeed::load(&fixture)?;
     let (addresses, keys) = filter_seed.get_filter_addresses_and_keys(&fixture)?;
-    let address = match addresses.len() {
-        0 => None,
-        1 => Some(addresses[0]),
-        _ => panic!("subscription to multiple addresses not supported"),
-    };
     let stream = TungsteniteStream::connect(ws_url, Duration::from_secs(5))
         .await
         .expect("WebSocket connection failed");
     let mut options = EventSubscriptionOptions::new()
         .with_block_id(ConfirmedBlockId::Number(filter_seed.from_block));
-    options.from_address = address;
+    options.from_address = make_address_filter(addresses);
     options.keys = keys;
     // requires JSON-RPC API >= v09
     options.finality_status = L2TransactionFinalityStatus::AcceptedOnL2;
